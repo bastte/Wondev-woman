@@ -44,7 +44,7 @@
             public GameAction(string input)
             {
                 var inputs = input.Split(' ');
-                string atype = inputs[0];
+                ActionType = inputs[0];
                 UnitIndex = int.Parse(inputs[1]);
                 MoveDirection = (Direction) Enum.Parse(typeof(Direction), inputs[2], true);
                 BuildDirection = (Direction) Enum.Parse(typeof(Direction), inputs[3], true);
