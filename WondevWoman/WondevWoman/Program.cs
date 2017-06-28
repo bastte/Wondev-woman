@@ -49,6 +49,19 @@
                 return (X - other.X) ^ 2 + (Y - other.Y) ^ 2;
             }
 
+            public override bool Equals(object obj)
+            {
+                Position position = obj as Position;
+                if (position == null) return false;
+
+                return X == position.X && Y == position.Y;
+            }
+
+            public override int GetHashCode()
+            {
+                return X.GetHashCode() ^ Y.GetHashCode();
+            }
+
             public override string ToString()
             {
                 return $"({X},{Y})";
@@ -91,6 +104,34 @@
             }
         }
 
+        class ScoringContext
+        {
+            public int[,] Map;
+            public int MapSize;
+
+            public Position CurrentPosition;
+            public Position NextPosition;
+            public Position NextBuildPosition;
+
+            public int CurrentPositionHeight;
+            public int NextPositionHeight;
+            public int NextBuildHeight;
+
+            public ScoringContext(GameAction action, int[,] map, Position[] units)
+            {
+                Map = map;
+                MapSize = map.GetLength(0);
+
+                CurrentPosition = units[action.UnitIndex];
+                NextPosition = CurrentPosition.GetNextPosition(action.MoveDirection);
+                NextBuildPosition = NextPosition.GetNextPosition(action.BuildDirection);
+
+                CurrentPositionHeight = Map[CurrentPosition.X, CurrentPosition.Y];
+                NextPositionHeight = Map[NextPosition.X, NextPosition.Y];
+                NextBuildHeight = Map[NextBuildPosition.X, NextBuildPosition.Y] + 1;
+            }
+        }
+
         static void Main(string[] args)
         {
             int size = int.Parse(Console.ReadLine());
@@ -104,6 +145,12 @@
                 Position[] myPositions = ParseUnits(unitsPerPlayer);
                 Position[] ennemyPositions = ParseUnits(unitsPerPlayer);
                 GameAction[] legalActions = ParseLegalActions();
+
+                if (legalActions == null || legalActions.Length == 0)
+                {
+                    Console.WriteLine("Kill all AIs!!");
+                    continue;
+                }
 
                 GameAction bestAction = legalActions[0];
                 int bestScore = 0;
@@ -128,82 +175,148 @@
             int[,] map,
             Position[] units)
         {
-            var mapSize = map.GetLength(0);
-            var currentPosition = units[candidate.UnitIndex];
-            var nextPosition = currentPosition.GetNextPosition(candidate.MoveDirection);
-            int currentHeight = map[currentPosition.X, currentPosition.Y];
-            int nextHeight = map[nextPosition.X, nextPosition.Y];
+            var scoringContext = new ScoringContext(candidate, map, units);
 
             // TODO: maybe add a bit of randomness to the initial score?
             int score = 0;
 
             #region Movement analysis
-            // If you can score a point, it's most likely a good thing to do
-            if (nextHeight == 3)
-            {
-                score += 50;
-            }
-
-            // It's probably always good to go higher
-            if (nextHeight > currentHeight)
-            {
-                score += 5;
-            }
-
-            // If not going higher, going in the direction of the center is probably good
-            if (nextHeight <= currentHeight)
-            {
-                var center = new Position(mapSize / 2, mapSize / 2);
-                int currentDistanceToCenter = center.GetDistance(currentPosition);
-                int nextDistanceToCenter = center.GetDistance(nextPosition);
-                if (nextDistanceToCenter < currentDistanceToCenter)
-                {
-                    score += 2 * (currentDistanceToCenter - nextDistanceToCenter) / map.Length;
-                }
-            }
+            score += ApplyGoToMaxHeightRule(scoringContext);
+            score += ApplyGoHigherRule(scoringContext);
+            score += ApplyCenterAffinityRule(scoringContext);
             #endregion
 
             #region Build analysis
-            var buildPosition = nextPosition.GetNextPosition(candidate.BuildDirection);
-            var buildHeight = map[buildPosition.X, buildPosition.Y] + 1;
+            score += ApplyBuildReachableMaxHeightCellRule(scoringContext);
+            score += ApplyBuildAlmostReachableMaxHeightCellRule(scoringContext);
 
-            // If I'm moving to height 2 and I can build a height 3 cell it's great for next round
-            if (nextHeight == 2 && buildHeight == 3)
-            {
-                score += 25;
-            }
-
-            // If I'm building a height 2 cell next to a height 3 cell it's good too
-            if (buildHeight == 2)
-            {
-                for (int x = -1; x <= 1; ++x)
-                {
-                    for (int y = -1; y <= 1; ++y)
-                    {
-                        if (0 <= buildPosition.X + x &&
-                            buildPosition.X + x < mapSize && 
-                            0 <= buildPosition.Y + y &&
-                            buildPosition.Y + y < mapSize)
-                        {
-                            var neighbourHeight = map[buildPosition.X + x, buildPosition.Y + y];
-                            if (neighbourHeight == 3)
-                            {
-                                score += 10;
-                            }
-                            if (neighbourHeight == 2)
-                            {
-                                score += 3;
-                            }
-                        }
-                    }
-                }
-            }
+            // Avoid building height 4 as I might block myself, unless I'm blocking the opponent?
+            // TODO
             #endregion
 
             Console.Error.WriteLine($"Evaluating action: {candidate}");
             Console.Error.WriteLine($"Score: {score}");
             return score;
         }
+
+        #region Scoring rules
+        private static int ApplyGoToMaxHeightRule(ScoringContext context)
+        {
+            // If you can score a point, it's most likely a good thing to do
+            if (context.NextPositionHeight == 3)
+            {
+                return 30;
+            }
+
+            return 0;
+        }
+
+        private static int ApplyGoHigherRule(ScoringContext context)
+        {
+            // It's probably always good to go higher
+            if (context.NextPositionHeight > context.CurrentPositionHeight)
+            {
+                return 25;
+            }
+
+            return 0;
+        }
+
+        private static int ApplyCenterAffinityRule(ScoringContext context)
+        {
+            // Going in the direction of the center is probably good
+            var center = new Position(context.MapSize / 2, context.MapSize / 2);
+            int currentDistanceToCenter = center.GetDistance(context.CurrentPosition);
+            int nextDistanceToCenter = center.GetDistance(context.NextPosition);
+
+            if (nextDistanceToCenter < currentDistanceToCenter)
+            {
+                return 2 * (currentDistanceToCenter - nextDistanceToCenter) / context.MapSize;
+            }
+
+            return 0;
+        }
+
+        private static int ApplyBuildReachableMaxHeightCellRule(ScoringContext context)
+        {
+            // If I'm moving to height 2 and I can build a height 3 cell it's great for next round
+            if (context.NextPositionHeight == 2 && context.NextBuildHeight == 3)
+            {
+                return 25;
+            }
+
+            return 0;
+        }
+
+        private static int ApplyBuildAlmostReachableMaxHeightCellRule(ScoringContext context)
+        {
+            int score = 0;
+            List<Position> reachableNeighbours = GetReachableNeighbours(context.CurrentPosition, context.Map);
+            foreach (Position neighbour in reachableNeighbours)
+            {
+                // If this is the neighbour I'm building on, don't forget to increment
+                int neighbourHeight = context.Map[neighbour.X, neighbour.Y];
+                if (neighbour.Equals(context.NextBuildPosition)) neighbourHeight++;
+
+                if (neighbourHeight == 3)
+                {
+                    score += 5;
+                }
+                if (neighbourHeight == 2)
+                {
+                    score += 2;
+                }
+                if (neighbourHeight == 1)
+                {
+                    score += 1;
+                }
+            }
+
+            // Penalize dead-ends
+            score -= (8 - reachableNeighbours.Count) * 2;
+
+            return score;
+        }
+        #endregion
+
+        #region Helpers
+        private static List<Position> GetNeighbours(Position currentPosition, int[,] map)
+        {
+            List<Position> neighbours = new List<Position>();
+            int mapSize = map.GetLength(0);
+
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                for (int dy = -1; dy <= 1; ++dy)
+                {
+                    if (dx == 0 && dy == 0) continue;
+
+                    int x = currentPosition.X + dx;
+                    int y = currentPosition.Y + dy;
+
+                    if (0 <= x && x < mapSize &&
+                        0 <= y && y < mapSize)
+                    {
+                        neighbours.Add(new Position(x, y));
+                    }
+                }
+            }
+
+            return neighbours;
+        }
+
+        private static List<Position> GetReachableNeighbours(Position currentPosition, int[,] map)
+        {
+            List<Position> neighbours = GetNeighbours(currentPosition, map);
+            int inaccessibleNeighbours = neighbours.RemoveAll(p =>
+                map[p.X, p.Y] < 0 ||
+                3 < map[p.X, p.Y] ||
+                1 + map[currentPosition.X, currentPosition.Y] < map[p.X, p.Y]);
+
+            Console.Error.WriteLine($"Removed {inaccessibleNeighbours} inaccessible neighbours");
+            return neighbours;
+        }
+        #endregion
 
         #region Input parsing
         private static int[,] ParseMap(int size)
