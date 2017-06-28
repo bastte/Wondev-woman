@@ -138,10 +138,10 @@
             int score = 0;
 
             #region Movement analysis
-            // If you can go to the highest, it's most likely the thing you'll always want to do
+            // If you can score a point, it's most likely a good thing to do
             if (nextHeight == 3)
             {
-                score += 100;
+                score += 50;
             }
 
             // It's probably always good to go higher
@@ -153,7 +153,7 @@
             // If not going higher, going in the direction of the center is probably good
             if (nextHeight <= currentHeight)
             {
-                var center = new Position(map.Length / 2, map.Length / 2);
+                var center = new Position(mapSize / 2, mapSize / 2);
                 int currentDistanceToCenter = center.GetDistance(currentPosition);
                 int nextDistanceToCenter = center.GetDistance(nextPosition);
                 if (nextDistanceToCenter < currentDistanceToCenter)
